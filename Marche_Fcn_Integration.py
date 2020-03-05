@@ -1,18 +1,6 @@
 import biorbd
 from casadi import *
-# from Fcn_forward_dynamic import *
-from Fcn_forward_dynamic_2 import *
-
-
-# Integration Euler
-def int_Euler_swing(T, nbNoeuds, neuler, x, u):
-    dn = T / nbNoeuds                                                        # Time step for shooting point
-    dt = dn / neuler                                                         # Time step for iteration
-    xj = x
-    for j in range(neuler):
-        dxj = ffcn_no_contact(xj, u)
-        xj += dt * dxj                                                       # xj = x(t+dt)
-    return xj
+from Fcn_forward_dynamic import *
 
 # Integration Runge Kutta 4
 def int_RK4_swing(T, nbNoeuds, nkutta, x, u):

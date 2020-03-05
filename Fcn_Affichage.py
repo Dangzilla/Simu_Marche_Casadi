@@ -114,7 +114,7 @@ def affichage_activation_results(sol_a, T_phase, nbNoeuds_phase, U_real):
         if nPhase == 0:
             t = np.linspace(0, T_phase[0], nbNoeuds_phase[0])
         else:
-            t = np.hstack([t, t[-1] + np.linspace(0, T_phase[nPhase], nbNoeuds_phase[nPhase] + 1)])
+            t = np.hstack([t, t[-1] + np.linspace(0, T_phase[nPhase], nbNoeuds_phase[nPhase])])
 
     # PLOT MUSCULAR ACTIVATION AND EMG
     nMus_emg = 9
