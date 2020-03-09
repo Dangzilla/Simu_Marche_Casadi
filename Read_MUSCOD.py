@@ -2,7 +2,7 @@ import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
 
-def InitialGuess_MUSCOD(file, nbQ, nbMus, nP, nbNoeuds_phase, T_phase, U_real):
+def InitialGuess_MUSCOD(file, nbQ, nbMus, nP, nbNoeuds_phase):
     nbX   = 2*nbQ + nbMus
     nbU   = nbMus + 3
 

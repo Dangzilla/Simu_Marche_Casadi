@@ -49,8 +49,8 @@ dq = x[nbQ: 2*nbQ]                                     # velocities
 
 # ----------------------------- Load Data ------------------------------------------------------------------------------
 # LOAD MEASUREMENT DATA FROM C3D FILE
-file        = '/home/leasanchez/programmation/Marche_Florent/DonneesMouvement/equinus01_out.c3d'
-kalman_file = '/home/leasanchez/programmation/Marche_Florent/DonneesMouvement/equinus01_out_MOD5000_leftHanded_GenderF_Florent_.Q2'
+file        = '/home/leasanchez/programmation/Simu_Marche_Casadi/DonneesMouvement/equincocont01_out.c3d'
+kalman_file = '/home/leasanchez/programmation/Simu_Marche_Casadi/DonneesMouvement/equincocont01_out_MOD5000_leftHanded_GenderF_Florent_.Q2'
 
 # ground reaction forces
 [GRF_real, T, T_stance] = load_data_GRF(file, nbNoeuds_stance, nbNoeuds_swing, 'cycle')

@@ -3,6 +3,7 @@ import matplotlib
 import matplotlib.pyplot as plt
 from Read_MUSCOD import InitialGuess_MUSCOD
 from LoadData import *
+from Fcn_Affichage import *
 import biorbd
 
 # SET MODELS
@@ -28,8 +29,8 @@ nP       = nbMus + 1                                   # number of parameters : 
 
 # ----------------------------- Load Data ------------------------------------------------------------------------------
 # LOAD MEASUREMENT DATA FROM C3D FILE
-file        = '/home/leasanchez/programmation/Marche_Florent/DonneesMouvement/equinus01_out.c3d'
-kalman_file = '/home/leasanchez/programmation/Marche_Florent/DonneesMouvement/equinus01_out_MOD5000_leftHanded_GenderF_Florent_.Q2'
+file        = '/home/leasanchez/programmation/Simu_Marche_Casadi/DonneesMouvement/equincocont01_out.c3d'
+kalman_file = '/home/leasanchez/programmation/Simu_Marche_Casadi/DonneesMouvement/equincocont01_out_MOD5000_leftHanded_GenderF_Florent_.Q2'
 
 # ground reaction forces
 [GRF_real, T, T_stance] = load_data_GRF(file, nbNoeuds_stance, nbNoeuds_swing, 'cycle')
@@ -37,9 +38,12 @@ T_swing                 = T - T_stance                                          
 T_phase                 = [T_stance, T_swing]
 
 # marker
-M_real_stance = load_data_markers(file, T_stance, nbNoeuds_stance, nbMarker, 'stance')
-M_real_swing  = load_data_markers(file, T_swing, nbNoeuds_swing, nbMarker, 'swing')
-M_real        = [np.hstack([M_real_stance[0, :, :], M_real_swing[0, :, :]]), np.hstack([M_real_stance[1, :, :], M_real_swing[1, :, :]]), np.hstack([M_real_stance[2, :, :], M_real_swing[2, :, :]])]
+M_real_stance   = load_data_markers(file, T_stance, nbNoeuds_stance, nbMarker, 'stance')
+M_real_swing    = load_data_markers(file, T_swing, nbNoeuds_swing, nbMarker, 'swing')
+M_real          = np.zeros((3, nbMarker, (nbNoeuds + 1)))
+M_real[0, :, :] = np.hstack([M_real_stance[0, :, :], M_real_swing[0, :, :]])
+M_real[1, :, :] = np.hstack([M_real_stance[1, :, :], M_real_swing[1, :, :]])
+M_real[2, :, :] = np.hstack([M_real_stance[2, :, :], M_real_swing[2, :, :]])
 
 
 # muscular excitation
@@ -58,7 +62,7 @@ wR  = 0.05                                             # ground reaction
 
 # ----------------------------- Load Results MUSCOD --------------------------------------------------------------------
 muscod_file  = '/home/leasanchez/programmation/Marche_Florent/ResultatsSimulation/equincocont01_out/RES/ANsWER_gaitCycle_works4.txt'
-[u0, x0, p0] = InitialGuess_MUSCOD(muscod_file, nbQ, nbMus, nP, nbNoeuds_phase, T_phase, U_real)
+[u0, x0, p0] = InitialGuess_MUSCOD(muscod_file, nbQ, nbMus, nP, nbNoeuds_phase)
 
 # re interpretation based on state and control changes (ie activation in control instead of state)
 q0  = x0[: nbQ, :]
@@ -69,19 +73,21 @@ F0  = u0[nbMus:, :]
 
 
 # ----------------------------- Dynamic Results MUSCOD -----------------------------------------------------------------
-GRF = np.zeros((3, nbNoeuds_stance))  # ground reaction forces
+GRF = np.zeros((3, nbNoeuds))  # ground reaction forces
 # SET ISOMETRIC FORCES
 n_muscle = 0
 for nGrp in range(model_stance.nbMuscleGroups()):
     for nMus in range(model_stance.muscleGroup(nGrp).nbMuscles()):
         fiso = model_stance.muscleGroup(nGrp).muscle(nMus).characteristics().forceIsoMax()
-        model_stance.muscleGroup(nGrp).muscle(nMus).characteristics().setForceIsoMax(p0[n_muscle + 1]*fiso)
+        model_stance.muscleGroup(nGrp).muscle(nMus).characteristics().setForceIsoMax(p0[n_muscle + 1] * fiso)
+        model_swing.muscleGroup(nGrp).muscle(nMus).characteristics().setForceIsoMax(p0[n_muscle + 1] * fiso)
 
 for k in range(nbNoeuds_stance):
     states   = biorbd.VecBiorbdMuscleStateDynamics(model_stance.nbMuscleTotal())
     n_muscle = 0
     for state in states:
         state.setActivation(a0[n_muscle, k])
+        n_muscle += 1
 
     joint_torque    = model_stance.muscularJointTorque(states, q0[:, k], dq0[:, k]).to_array()
     joint_torque[0] = F0[0, k]                              # ajout des forces au pelvis
@@ -89,9 +95,11 @@ for k in range(nbNoeuds_stance):
     joint_torque[2] = F0[2, k]
 
     C   = model_stance.getConstraints()
-    ddq = model_stance.ForwardDynamicsConstraintsDirect(q0[:, k], dq0[:, k], joint_torque, C)
+    model_stance.ForwardDynamicsConstraintsDirect(q0[:, k], dq0[:, k], joint_torque, C)
     GRF[:, k] = C.getForce().to_array()
 
+# GROUND REACTION FORCES
+diff_F = (GRF_real - GRF) * (GRF_real - GRF)
 
 # JOINT POSITIONS
 plt.figure(1)
@@ -266,11 +274,12 @@ plt.plot([0, t[-1]], [200, 200], 'k--')    # upper bound
 for n in range(nbNoeuds_phase[0] + nbNoeuds_phase[1] -1):
     plt.plot([t[n], t[n+1], t[n+1]], [F0[2, n], F0[2, n], F0[2, n + 1]], 'b')
 
+
 # CONVERGENCE
 Jm = wMa * sum(diff_M[0, :, :]) + wMa * sum(diff_M[2, :, :])
-Je = wU*(sum(diff_U[:, -1]))
-Ja = wL*(a0[1, -1] * a0[1, -1]) + wL*(a0[2, -1]*a0[2, -1]) + wL*(a0[3, -1]*a0[3, -1]) + wL*(a0[5, -1]*a0[5, -1]) + wL*(a0[6, -1]*a0[6, -1]) + wL*(a0[11, -1]*a0[11, -1]) + wL*(a0[12, -1]*a0[12, -1])
-
+Je = wU * (sum(diff_U))
+Ja = wL * (np.dot(a0[1, :], a0[1, :].T)) + wL * (np.dot(a0[2, :],a0[2, :].T)) + wL * (np.dot(a0[3, :],a0[3, :].T)) + wL * (np.dot(a0[5, :],a0[5, :].T)) + wL * (np.dot(a0[6, :],a0[6, :].T)) + wL * (np.dot(a0[11, :],a0[11, :].T)) + wL * (np.dot(a0[12, :],a0[12, :].T))
+JR = wR * (sum(diff_F))
 
 plt.draw()
 plt.show()
