@@ -170,7 +170,7 @@ ubx = vertcat(ubu, ubX, ubp)
 
 # ----------------------------- Initial guess --------------------------------------------------------------------------
 muscod_file  = '/home/leasanchez/programmation/Marche_Florent/ResultatsSimulation/equincocont01_out/RES/ANsWER_gaitCycle_works4.txt'
-[u0, x0, p0] = InitialGuess_MUSCOD(muscod_file, nbQ, nbMus, nP, nbNoeuds_phase, T_phase, U_real)
+[u0, x0, p0] = InitialGuess_MUSCOD(muscod_file, nbQ, nbMus, nP, nbNoeuds_phase)
 # re interpretation based on state and control changes (ie activation in control instead of state)
 q0  = x0[: nbQ, :]
 dq0 = x0[nbQ: 2 * nbQ, :]

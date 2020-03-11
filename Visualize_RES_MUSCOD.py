@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 from Read_MUSCOD import InitialGuess_MUSCOD
 from LoadData import *
 from Fcn_Affichage import *
+from Marche_Fcn_Integration import *
 import biorbd
 
 # SET MODELS
@@ -82,7 +83,78 @@ for nGrp in range(model_stance.nbMuscleGroups()):
         model_stance.muscleGroup(nGrp).muscle(nMus).characteristics().setForceIsoMax(p0[n_muscle + 1] * fiso)
         model_swing.muscleGroup(nGrp).muscle(nMus).characteristics().setForceIsoMax(p0[n_muscle + 1] * fiso)
 
+constraint = 0
+
+def fcn_dyn_contact(x, u):
+    Q  = x[:nbQ]
+    dQ = x[nbQ:]
+    states = biorbd.VecBiorbdMuscleStateDynamics(model_stance.nbMuscleTotal())
+    n_muscle = 0
+    for state in states:
+        state.setActivation(u[n_muscle])
+        n_muscle += 1
+
+    joint_torque    = model_stance.muscularJointTorque(states, q0[:, k], dq0[:, k]).to_array()
+    joint_torque[0] = u[nbMus + 0]  # ajout des forces au pelvis
+    joint_torque[1] = u[nbMus + 1]
+    joint_torque[2] = u[nbMus + 2]
+
+    ddQ = model_stance.ForwardDynamicsConstraintsDirect(Q, dQ, joint_torque)
+    return np.hstack([dQ, ddQ.to_array()])
+
+
+def fcn_dyn_nocontact(x, u):
+    Q  = x[:nbQ]
+    dQ = x[nbQ:]
+    states = biorbd.VecBiorbdMuscleStateDynamics(model_stance.nbMuscleTotal())
+    n_muscle = 0
+    for state in states:
+        state.setActivation(u[n_muscle])
+        n_muscle += 1
+
+    joint_torque = model_swing.muscularJointTorque(states, q0[:, k], dq0[:, k]).to_array()
+    joint_torque[0] = u[nbMus + 0]  # ajout des forces au pelvis
+    joint_torque[1] = u[nbMus + 1]
+    joint_torque[2] = u[nbMus + 2]
+
+    ddQ = model_swing.ForwardDynamics(Q, dQ, joint_torque)
+    return np.hstack([dQ, ddQ.to_array()])
+
+def int_RK4(fcn, x, u):
+    dn = T_stance / nbNoeuds_stance                 # Time step for shooting point
+    dt = dn / 5                                     # Time step for iteration
+    xj = x
+    for i in range(5):
+        k1 = fcn(xj, u)
+        x2 = xj + (dt/2)*k1
+        k2 = fcn(x2, u)
+        x3 = xj + (dt/2)*k2
+        k3 = fcn(x3, u)
+        x4 = xj + dt*k3
+        k4 = fcn(x4, u)
+
+        xj += dt/6 * (k1 + 2*k2 + 2*k3 + k4)
+    return xj
+
+def int_euler(fcn, x, u):
+    dn = T / nbNoeuds                                                        # Time step for shooting point
+    dt = dn / 20                                                             # Time step for iteration
+    xj = x
+    for j in range(20):
+        dxj = fcn(x, u)
+        xj += dt * dxj                                                       # xj = x(t+dt)
+    return xj
+
+
+c = 0
 for k in range(nbNoeuds_stance):
+    xk  = np.hstack([q0[:, k], dq0[:, k]])
+    xk1 = np.hstack([q0[:, k + 1], dq0[:, k + 1]])
+    uk  = np.hstack([a0[:, k], F0[:, k]])
+
+    xk1_int_rk4 = int_RK4(fcn_dyn_contact, xk, uk)
+    c += xk1 - xk1_int_rk4
+
     states   = biorbd.VecBiorbdMuscleStateDynamics(model_stance.nbMuscleTotal())
     n_muscle = 0
     for state in states:
@@ -95,8 +167,17 @@ for k in range(nbNoeuds_stance):
     joint_torque[2] = F0[2, k]
 
     C   = model_stance.getConstraints()
-    model_stance.ForwardDynamicsConstraintsDirect(q0[:, k], dq0[:, k], joint_torque, C)
+    ddq = model_stance.ForwardDynamicsConstraintsDirect(q0[:, k], dq0[:, k], joint_torque, C)
     GRF[:, k] = C.getForce().to_array()
+
+# # plot integrale
+# x_int = np.zeros((nbX, 10))
+# x_int[:, 0] = np.hstack([q0[:, 0], dq0[:, 0]])
+# T = T/10
+# u_int = np.hstack([a0[:, 0], F0[:, 0]])
+# for k in range(9):
+#      x_int[:, k + 1] = int_RK4(fcn_dyn_contact, x_int[:, k], u_int)
+
 
 # GROUND REACTION FORCES
 diff_F = (GRF_real - GRF) * (GRF_real - GRF)
