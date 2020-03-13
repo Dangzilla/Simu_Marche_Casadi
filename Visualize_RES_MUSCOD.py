@@ -1,11 +1,10 @@
 import numpy as np
-import matplotlib
+import biorbd
 import matplotlib.pyplot as plt
 from Read_MUSCOD import InitialGuess_MUSCOD
-from LoadData import *
-from Fcn_Affichage import *
-from Marche_Fcn_Integration import *
-import biorbd
+from LoadData import load_data_GRF, load_data_markers, load_data_emg
+from Fcn_plot_results import plot_q_MUSCOD, plot_dq_MUSCOD, plot_markers_heatmap, plot_emg_heatmap, plot_control_MUSCOD, plot_GRF_MUSCOD, plot_markers_result
+
 
 # SET MODELS
 model_swing  = biorbd.Model('/home/leasanchez/programmation/Simu_Marche_Casadi/ModelesS2M/ANsWER_Rleg_6dof_17muscle_0contact.bioMod')
@@ -52,6 +51,13 @@ U_real_swing  = load_data_emg(file, T_swing, nbNoeuds_swing, nbMus, 'swing')
 U_real_stance = load_data_emg(file, T_stance, nbNoeuds_stance, nbMus, 'stance')
 U_real        = np.hstack([U_real_stance, U_real_swing])
 
+# force isomax
+F_iso0 = np.zeros(nbMus)
+n_muscle = 0
+for nGrp in range(model_stance.nbMuscleGroups()):
+    for nMus in range(model_stance.muscleGroup(nGrp).nbMuscles()):
+        F_iso0[n_muscle] = model_stance.muscleGroup(nGrp).muscle(nMus).characteristics().forceIsoMax()
+        n_muscle += 1
 
 # ----------------------------- Weighting factors ----------------------------------------------------------------------
 wL  = 1                                                # activation
@@ -68,92 +74,211 @@ muscod_file  = '/home/leasanchez/programmation/Marche_Florent/ResultatsSimulatio
 # re interpretation based on state and control changes (ie activation in control instead of state)
 q0  = x0[: nbQ, :]
 dq0 = x0[nbQ: 2 * nbQ, :]
-a0  = x0[2 * nbQ:, :]
+a0  = x0[2 * nbQ:, :-1]
 e0  = u0[:nbMus, :]
 F0  = u0[nbMus:, :]
 
 
 # ----------------------------- Dynamic Results MUSCOD -----------------------------------------------------------------
-GRF = np.zeros((3, nbNoeuds))  # ground reaction forces
-# SET ISOMETRIC FORCES
-n_muscle = 0
-for nGrp in range(model_stance.nbMuscleGroups()):
-    for nMus in range(model_stance.muscleGroup(nGrp).nbMuscles()):
-        fiso = model_stance.muscleGroup(nGrp).muscle(nMus).characteristics().forceIsoMax()
-        model_stance.muscleGroup(nGrp).muscle(nMus).characteristics().setForceIsoMax(p0[n_muscle + 1] * fiso)
-        model_swing.muscleGroup(nGrp).muscle(nMus).characteristics().setForceIsoMax(p0[n_muscle + 1] * fiso)
+def int_RK4_nocontact(x, u):
+    # fcn ode
+    def fcn_dyn_nocontact(x, u):
+        m  = biorbd.Model('/home/leasanchez/programmation/Simu_Marche_Casadi/ModelesS2M/ANsWER_Rleg_6dof_17muscle_0contact.bioMod')
+        Q  = x[:nbQ]
+        dQ = x[nbQ:]
 
-constraint = 0
+        # SET ISOMETRIC FORCES
+        n_muscle = 0
+        for nGrp in range(m.nbMuscleGroups()):
+            for nMus in range(m.muscleGroup(nGrp).nbMuscles()):
+                m.muscleGroup(nGrp).muscle(nMus).characteristics().setForceIsoMax(p0[n_muscle + 1] * F_iso0[n_muscle])
+                n_muscle += 1
 
-def fcn_dyn_contact(x, u):
-    Q  = x[:nbQ]
-    dQ = x[nbQ:]
-    states = biorbd.VecBiorbdMuscleStateDynamics(model_stance.nbMuscleTotal())
-    n_muscle = 0
-    for state in states:
-        state.setActivation(u[n_muscle])
-        n_muscle += 1
+        # SET ACTIVATION
+        states = biorbd.VecBiorbdMuscleStateDynamics(m.nbMuscleTotal())
+        n_muscle = 0
+        for state in states:
+            state.setActivation(u[n_muscle])
+            n_muscle += 1
 
-    joint_torque    = model_stance.muscularJointTorque(states, q0[:, k], dq0[:, k]).to_array()
-    joint_torque[0] = u[nbMus + 0]  # ajout des forces au pelvis
-    joint_torque[1] = u[nbMus + 1]
-    joint_torque[2] = u[nbMus + 2]
+        # CALCULATE JOINT TORQUE
+        joint_torque    = m.muscularJointTorque(states, Q, dQ).to_array()
+        joint_torque[0] = u[nbMus + 0]  # ajout des forces au pelvis
+        joint_torque[1] = u[nbMus + 1]
+        joint_torque[2] = u[nbMus + 2]
+        # joint_torque = np.zeros(nbQ)
+        # FORWARD DYNAMIQUE
+        ddQ = m.ForwardDynamics(Q, dQ, joint_torque)
 
-    ddQ = model_stance.ForwardDynamicsConstraintsDirect(Q, dQ, joint_torque)
-    return np.hstack([dQ, ddQ.to_array()])
+        return np.hstack([dQ, ddQ.to_array()])
 
-
-def fcn_dyn_nocontact(x, u):
-    Q  = x[:nbQ]
-    dQ = x[nbQ:]
-    states = biorbd.VecBiorbdMuscleStateDynamics(model_stance.nbMuscleTotal())
-    n_muscle = 0
-    for state in states:
-        state.setActivation(u[n_muscle])
-        n_muscle += 1
-
-    joint_torque = model_swing.muscularJointTorque(states, q0[:, k], dq0[:, k]).to_array()
-    joint_torque[0] = u[nbMus + 0]  # ajout des forces au pelvis
-    joint_torque[1] = u[nbMus + 1]
-    joint_torque[2] = u[nbMus + 2]
-
-    ddQ = model_swing.ForwardDynamics(Q, dQ, joint_torque)
-    return np.hstack([dQ, ddQ.to_array()])
-
-def int_RK4(fcn, x, u):
-    dn = T_stance / nbNoeuds_stance                 # Time step for shooting point
-    dt = dn / 5                                     # Time step for iteration
+    dn = T_swing / nbNoeuds_swing                   # Time step for shooting point
+    dt = dn / 4                                     # Time step for iteration
     xj = x
-    for i in range(5):
-        k1 = fcn(xj, u)
+    for i in range(4):
+        k1 = fcn_dyn_nocontact(xj, u)
         x2 = xj + (dt/2)*k1
-        k2 = fcn(x2, u)
+        k2 = fcn_dyn_nocontact(x2, u)
         x3 = xj + (dt/2)*k2
-        k3 = fcn(x3, u)
+        k3 = fcn_dyn_nocontact(x3, u)
         x4 = xj + dt*k3
-        k4 = fcn(x4, u)
+        k4 = fcn_dyn_nocontact(x4, u)
 
         xj += dt/6 * (k1 + 2*k2 + 2*k3 + k4)
     return xj
 
-def int_euler(fcn, x, u):
-    dn = T / nbNoeuds                                                        # Time step for shooting point
-    dt = dn / 20                                                             # Time step for iteration
+def int_RK4_contact(x, u):
+    def fcn_dyn_contact(x, u):
+        m  = biorbd.Model('/home/leasanchez/programmation/Simu_Marche_Casadi/ModelesS2M/ANsWER_Rleg_6dof_17muscle_1contact.bioMod')
+        Q  = x[:nbQ]
+        dQ = x[nbQ:]
+
+        # SET ISOMETRIC FORCES
+        n_muscle = 0
+        for nGrp in range(m.nbMuscleGroups()):
+            for nMus in range(m.muscleGroup(nGrp).nbMuscles()):
+                m.muscleGroup(nGrp).muscle(nMus).characteristics().setForceIsoMax(p0[n_muscle + 1] * F_iso0[n_muscle])
+                n_muscle += 1
+
+        # SET ACTIVATION
+        states = biorbd.VecBiorbdMuscleStateDynamics(m.nbMuscleTotal())
+        n_muscle = 0
+        for state in states:
+            state.setActivation(u[n_muscle])
+            n_muscle += 1
+
+        # CALCULATE JOINT TORQUE
+        joint_torque    = m.muscularJointTorque(states, Q, dQ).to_array()
+        joint_torque[0] = u[nbMus + 0]  # ajout des forces au pelvis
+        joint_torque[1] = u[nbMus + 1]
+        joint_torque[2] = u[nbMus + 2]
+
+        # joint_torque = np.zeros(nbQ)
+        # FORWARD DYNAMIQUE
+        ddQ = m.ForwardDynamicsConstraintsDirect(Q, dQ, joint_torque)
+        return np.hstack([dQ, ddQ.to_array()])
+
+    dn = T_stance / nbNoeuds_stance                  # Time step for shooting point
+    dt = dn / 10                                     # Time step for iteration
     xj = x
-    for j in range(20):
-        dxj = fcn(x, u)
-        xj += dt * dxj                                                       # xj = x(t+dt)
+    for i in range(10):
+        k1 = fcn_dyn_contact(xj, u)
+        x2 = xj + (dt/2)*k1
+        k2 = fcn_dyn_contact(x2, u)
+        x3 = xj + (dt/2)*k2
+        k3 = fcn_dyn_contact(x3, u)
+        x4 = xj + dt*k3
+        k4 = fcn_dyn_contact(x4, u)
+
+        xj += dt/6 * (k1 + 2*k2 + 2*k3 + k4)
     return xj
 
 
-c = 0
+# CONTRAINTES
+constraint = np.zeros((2*nbQ, nbNoeuds))
+
+q2 = np.zeros((nbQ, nbNoeuds + 1))
+q2[:, 0] = q0[:, 0]
+
+dq2 = np.zeros((nbQ, nbNoeuds + 1))
+dq2[:, 0] = dq0[:, 0]
+
+# for k in range(nbNoeuds_stance):
+#     xk  = np.hstack([q0[:, k], dq0[:, k]])
+#     xk1 = np.hstack([q0[:, k + 1], dq0[:, k + 1]])
+#     uk  = np.hstack([a0[:, k], F0[:, k]])
+#
+#     xk1_int_rk4 = int_RK4_contact(xk, uk)
+#     constraint[:, k] = xk1 - xk1_int_rk4
+#     q2[:, k + 1] = xk1_int_rk4[:nbQ]
+#     dq2[:, k + 1] = xk1_int_rk4[nbQ:]
+#
+# for k in range(nbNoeuds_swing):
+#     xk  = np.hstack([q0[:, nbNoeuds_stance + k], dq0[:, nbNoeuds_stance + k]])
+#     xk1 = np.hstack([q0[:, nbNoeuds_stance + k + 1], dq0[:, nbNoeuds_stance + k + 1]])
+#     uk  = np.hstack([a0[:, nbNoeuds_stance + k], F0[:, nbNoeuds_stance + k]])
+#
+#     xk1_int_rk4 = int_RK4_nocontact(xk, uk)
+#     constraint[:, nbNoeuds_stance + k] = xk1 - xk1_int_rk4
+#     q2[:, nbNoeuds_stance + k + 1] = xk1_int_rk4[:nbQ]
+#     dq2[:, nbNoeuds_stance + k + 1] = xk1_int_rk4[nbQ:]
+
+for k in range(nbNoeuds):
+    xk  = np.hstack([q0[:, k], dq0[:, k]])
+    xk1 = np.hstack([q0[:, k + 1], dq0[:, k + 1]])
+    uk  = np.hstack([a0[:, k], F0[:, k]])
+    # uk = np.zeros(nbMus + 3)
+
+    if k < nbNoeuds_stance + 1:
+        xk1_int_rk4 = int_RK4_contact(xk, uk)
+    else:
+        xk1_int_rk4 = int_RK4_nocontact(xk, uk)
+
+    constraint[:, k] = xk1 - xk1_int_rk4
+    q2[:, k + 1] = xk1_int_rk4[:nbQ]
+    dq2[:, k + 1] = xk1_int_rk4[nbQ:]
+
+plot_markers_result(q2, T_phase, nbNoeuds_phase, nbMarker, M_real)
+
+# # JOINT TORQUE
+# joint_torque = np.zeros((nbQ, nbNoeuds))
+#
+# for k in range(nbNoeuds_stance):
+#     xk  = np.hstack([q0[:, k], dq0[:, k]])
+#     uk  = np.hstack([a0[:, k], F0[:, k]])
+#
+#     # SET ISOMETRIC FORCES
+#     n_muscle = 0
+#     for nGrp in range(model_stance.nbMuscleGroups()):
+#         for nMus in range(model_stance.muscleGroup(nGrp).nbMuscles()):
+#             model_stance.muscleGroup(nGrp).muscle(nMus).characteristics().setForceIsoMax(p0[n_muscle + 1] * F_iso0[n_muscle])
+#             n_muscle += 1
+#
+#     # SET ACTIVATION
+#     states = biorbd.VecBiorbdMuscleStateDynamics(model_stance.nbMuscleTotal())
+#     n_muscle = 0
+#     for state in states:
+#         state.setActivation(uk[n_muscle])
+#         n_muscle += 1
+#
+#     # CALCULATE JOINT TORQUE
+#     joint_torque[:, k] = model_stance.muscularJointTorque(states, q0[:, k], dq0[:, k]).to_array()
+#     joint_torque[0, k] = uk[nbMus + 0]  # ajout des forces au pelvis
+#     joint_torque[1, k] = uk[nbMus + 1]
+#     joint_torque[2, k] = uk[nbMus + 2]
+#
+#
+# for k in range(nbNoeuds_swing):
+#     xk  = np.hstack([q0[:, nbNoeuds_stance + k], dq0[:, nbNoeuds_stance + k]])
+#     uk  = np.hstack([a0[:, nbNoeuds_stance + k], F0[:, nbNoeuds_stance + k]])
+#
+#     # SET ISOMETRIC FORCES
+#     n_muscle = 0
+#     for nGrp in range(model_swing.nbMuscleGroups()):
+#         for nMus in range(model_swing.muscleGroup(nGrp).nbMuscles()):
+#             model_swing.muscleGroup(nGrp).muscle(nMus).characteristics().setForceIsoMax(p0[n_muscle + 1] * F_iso0[n_muscle])
+#             n_muscle += 1
+#
+#     # SET ACTIVATION
+#     states = biorbd.VecBiorbdMuscleStateDynamics(model_swing.nbMuscleTotal())
+#     n_muscle = 0
+#     for state in states:
+#         state.setActivation(uk[n_muscle])
+#         n_muscle += 1
+#
+#     # CALCULATE JOINT TORQUE
+#     joint_torque[:, nbNoeuds_stance + k] = model_swing.muscularJointTorque(states, q0[:, nbNoeuds_stance + k], dq0[:, nbNoeuds_stance + k]).to_array()
+#     joint_torque[0, nbNoeuds_stance + k] = uk[nbMus + 0]  # ajout des forces au pelvis
+#     joint_torque[1, nbNoeuds_stance + k] = uk[nbMus + 1]
+#     joint_torque[2, nbNoeuds_stance + k] = uk[nbMus + 2]
+#
+
+# GROUND REACTION FORCES
+GRF = np.zeros((3, nbNoeuds))  # ground reaction forces
 for k in range(nbNoeuds_stance):
     xk  = np.hstack([q0[:, k], dq0[:, k]])
     xk1 = np.hstack([q0[:, k + 1], dq0[:, k + 1]])
     uk  = np.hstack([a0[:, k], F0[:, k]])
-
-    xk1_int_rk4 = int_RK4(fcn_dyn_contact, xk, uk)
-    c += xk1 - xk1_int_rk4
 
     states   = biorbd.VecBiorbdMuscleStateDynamics(model_stance.nbMuscleTotal())
     n_muscle = 0
@@ -170,133 +295,21 @@ for k in range(nbNoeuds_stance):
     ddq = model_stance.ForwardDynamicsConstraintsDirect(q0[:, k], dq0[:, k], joint_torque, C)
     GRF[:, k] = C.getForce().to_array()
 
-# # plot integrale
-# x_int = np.zeros((nbX, 10))
-# x_int[:, 0] = np.hstack([q0[:, 0], dq0[:, 0]])
-# T = T/10
-# u_int = np.hstack([a0[:, 0], F0[:, 0]])
-# for k in range(9):
-#      x_int[:, k + 1] = int_RK4(fcn_dyn_contact, x_int[:, k], u_int)
+JR = wR * np.dot((GRF_real[1, :] - GRF[0, :]), (GRF_real[1, :] - GRF[0, :])) + wR * np.dot((GRF_real[2, :] - GRF[2, :]), (GRF_real[2, :] - GRF[2, :]))
 
-
-# GROUND REACTION FORCES
-diff_F = (GRF_real - GRF) * (GRF_real - GRF)
-
-# JOINT POSITIONS
-plt.figure(1)
-t_stance = np.linspace(0, T_phase[0], nbNoeuds_phase[0])
-t_swing = t_stance[-1] + np.linspace(0, T_phase[1], nbNoeuds_phase[1])
-t = np.hstack([t_stance, t_swing])
-t = np.hstack([t, t[-1] + (t[-1] - t[-2])])
-
-plt.subplot(231)
-plt.title('Pelvis_Trans_X')
-plt.plot(t, q0[0, :])
-plt.plot([T_stance, T_stance], [min(q0[0, :]), max(q0[0, :])], 'k:')
-plt.xlabel('time (s)')
-plt.ylabel('position (m)')
-
-plt.subplot(232)
-plt.title('Pelvis_Trans_Y')
-plt.plot(t, q0[1, :])
-plt.plot([T_stance, T_stance], [min(q0[1, :]), max(q0[1, :])], 'k:')
-plt.xlabel('time (s)')
-plt.ylabel('position (m)')
-
-plt.subplot(233)
-plt.title('Pelvis_Rot_Z')
-plt.plot(t, q0[2, :]*180/np.pi)
-plt.plot([T_stance, T_stance], [min(q0[2, :]*180/np.pi), max(q0[2, :]*180/np.pi)], 'k:')
-plt.xlabel('time (s)')
-plt.ylabel('angle (deg)')
-
-plt.subplot(234)
-plt.title('R_Hip_Rot_Z')
-plt.plot(t, q0[3, :]*180/np.pi)
-plt.plot([T_stance, T_stance], [min(q0[3, :]*180/np.pi), max(q0[3, :]*180/np.pi)], 'k:')
-plt.xlabel('time (s)')
-plt.ylabel('angle (deg)')
-
-plt.subplot(235)
-plt.title('R_Knee_Rot_Z')
-plt.plot(t, q0[4, :]*180/np.pi)
-plt.plot([T_stance, T_stance], [min(q0[4, :]*180/np.pi), max(q0[4, :]*180/np.pi)], 'k:')
-plt.xlabel('time (s)')
-plt.ylabel('angle (deg)')
-
-plt.subplot(236)
-plt.title('R_Ankle_Rot_Z')
-plt.plot(t, q0[5, :]*180/np.pi)
-plt.plot([T_stance, T_stance], [min(q0[5, :]*180/np.pi), max(q0[5, :]*180/np.pi)], 'k:')
-plt.xlabel('time (s)')
-plt.ylabel('angle (deg)')
-
-
-
-# MARKERS -- Heatmap
+# TRACKING MARKERS
 M_simu = np.zeros((3, nbMarker, nbNoeuds + 1))
 for n_st in range(nbNoeuds_phase[0]):
     for nMark in range(nbMarker):
         M_simu[:, nMark, n_st] = model_stance.marker(q0[:, n_st], nMark).to_array()
 for n_sw in range(nbNoeuds_phase[1] + 1):
     for nMark in range(nbMarker):
-        M_simu[:, nMark, (nbNoeuds_phase[0] + n_sw)] = model_swing.marker(q0[:, (nbNoeuds_phase[0] + n_sw)], nMark).to_array()
+        M_simu[:, nMark, (nbNoeuds_phase[0] + n_sw)] = model_swing.marker(q0[:, (nbNoeuds_phase[0] + n_sw)],nMark).to_array()
 
+diff_M = (M_simu - M_real) * (M_simu - M_real)
+Jm = wMa * np.sum(diff_M[0, :, :]) + wMa * np.sum(diff_M[2, :, :])
 
-Labels_M = ["L_IAS", "L_IPS", "R_IPS", "R_IAS", "R_FTC",
-            "R_Thigh_Top", "R_Thigh_Down", "R_Thigh_Front", "R_Thigh_Back", "R_FLE", "R_FME",
-            "R_FAX", "R_TTC", "R_Shank_Top", "R_Shank_Down", "R_Shank_Front", "R_Shank_Tibia", "R_FAL", "R_TAM",
-            "R_FCC", "R_FM1", "R_FMP1", "R_FM2", "R_FMP2", "R_FM5", "R_FMP5"]
-node    = np.linspace(0, nbNoeuds, nbNoeuds, dtype = int)
-
-diff_M = (M_simu - M_real)*(M_simu - M_real)
-
-fig4, ax = plt.subplots()
-im       = ax.imshow(diff_M[0, :, :])
-
-# Create labels
-ax.set_xticks(np.arange(len(node)))
-ax.set_yticks(np.arange(len(Labels_M)))
-ax.set_xticklabels(node)
-ax.set_yticklabels(Labels_M)
-ax.set_title('Markers differences')
-
-# Create grid
-ax.set_xticks(np.arange(diff_M[0, :, :].shape[1] + 1) - .5, minor=True)
-ax.set_yticks(np.arange(diff_M[0, :, :].shape[0] + 1) - .5, minor=True)
-ax.grid(which="minor", color="k", linestyle='-', linewidth=0.2)
-ax.tick_params(which="minor", bottom=False, left=False)
-
-# Create colorbar
-cbar = ax.figure.colorbar(im, ax=ax)
-cbar.ax.set_ylabel('squared differences', rotation=-90, va="bottom")
-
-
-# MUSCULAR ACTIVATIONS
-plt.figure(2)
-Labels = ['GLUT_MAX1', 'GLUT_MAX2', 'GLUT_MAX3', 'GLUT_MED1', 'GLUT_MED2', 'GLUT_MED3', 'R_SEMIMEM', 'R_SEMITEN',
-          'R_BI_FEM_LH', 'R_RECTUS_FEM', 'R_VAS_MED', 'R_VAS_INT', 'R_VAS_LAT', 'R_GAS_MED', 'R_GAS_LAT',
-          'R_SOLEUS', 'R_TIB_ANT']
-
-nMus_emg = 9
-for nMus in range(nbMus):
-    plt.subplot(6, 3, nMus + 1)
-    plt.title(Labels[nMus])
-    plt.plot([T_stance, T_stance], [0, 1], 'k:')
-
-    if nMus == 1 or nMus == 2 or nMus == 3 or nMus == 5 or nMus == 6 or nMus == 11 or nMus == 12:
-        plt.plot(t, a0[nMus, :], 'b')
-    else:
-        plt.plot(t, a0[nMus, :], 'b')
-        plt.plot(t, U_real[nMus_emg, :], 'r-')
-        nMus_emg -= 1
-
-# EMG -- HeatMap
-Labels_emg = ['GLUT_MAX1', 'GLUT_MAX2', 'GLUT_MAX3', 'GLUT_MED1', 'GLUT_MED2', 'GLUT_MED3', 'R_SEMIMEM', 'R_SEMITEN',
-              'R_BI_FEM_LH', 'R_RECTUS_FEM', 'R_VAS_MED', 'R_VAS_INT', 'R_VAS_LAT', 'R_GAS_MED', 'R_GAS_LAT',
-              'R_SOLEUS', 'R_TIB_ANT']
-node       = np.linspace(0, nbNoeuds, nbNoeuds, dtype = int)
-
+# TRACKING EMG
 # get only muscles with emg
 U_emg = np.zeros(((nbMus - 7), nbNoeuds))
 U_emg[0, :] = e0[0, :]
@@ -310,59 +323,31 @@ U_emg[7, :] = e0[14, :]
 U_emg[8, :] = e0[15, :]
 U_emg[9, :] = e0[16, :]
 
-diff_U = (U_emg - U_real[:, :-1])*(U_emg - U_real[:, :-1])
+diff_U = (U_emg - U_real) * (U_emg - U_real)
+Je = wU * (np.sum(diff_U))
 
-fig, ax = plt.subplots()
-im_emg  = ax.imshow(diff_U[:, :], cmap=plt.get_cmap('YlOrRd'))
-
-# Create labels
-ax.set_xticks(np.arange(len(node)))
-ax.set_yticks(np.arange(len(Labels_emg)))
-ax.set_xticklabels(node)
-ax.set_yticklabels(Labels_emg)
-ax.set_title('Muscular activations differences')
-
-# Create grid
-ax.set_xticks(np.arange(diff_U[:, :].shape[1] + 1) - .5, minor=True)
-ax.set_yticks(np.arange(diff_U[:, :].shape[0] + 1) - .5, minor=True)
-ax.grid(which="minor", color="k", linestyle='-', linewidth=0.2)
-ax.tick_params(which="minor", bottom=False, left=False)
-
-# Create colorbar
-cbar = ax.figure.colorbar(im_emg, ax=ax)
-cbar.ax.set_ylabel('squared differences ', rotation=-90, va="bottom")
-
-# PELVIS FORCES
-plt.figure(3)
-plt.subplot(311)
-plt.title('Force Pelvis TX')
-plt.plot([0, t[-1]], [-1000, -1000], 'k--')  # lower bound
-plt.plot([0, t[-1]], [1000, 1000], 'k--')    # upper bound
-for n in range(nbNoeuds_phase[0] + nbNoeuds_phase[1] -1):
-    plt.plot([t[n], t[n+1], t[n+1]], [F0[0, n], F0[0, n], F0[0, n + 1]], 'b')
-
-plt.subplot(312)
-plt.title('Force Pelvis TY')
-plt.plot([0, t[-1]], [-2000, -2000], 'k--')  # lower bound
-plt.plot([0, t[-1]], [2000, 2000], 'k--')    # upper bound
-for n in range(nbNoeuds_phase[0] + nbNoeuds_phase[1] -1):
-    plt.plot([t[n], t[n+1], t[n+1]], [F0[1, n], F0[1, n], F0[1, n + 1]], 'b')
-
-plt.subplot(313)
-plt.title('Force Pelvis RZ')
-plt.plot([0, t[-1]], [-200, -200], 'k--')  # lower bound
-plt.plot([0, t[-1]], [200, 200], 'k--')    # upper bound
-for n in range(nbNoeuds_phase[0] + nbNoeuds_phase[1] -1):
-    plt.plot([t[n], t[n+1], t[n+1]], [F0[2, n], F0[2, n], F0[2, n + 1]], 'b')
-
-
-# CONVERGENCE
-Jm = wMa * sum(diff_M[0, :, :]) + wMa * sum(diff_M[2, :, :])
-Je = wU * (sum(diff_U))
+# ACTIVATIONS
 Ja = wL * (np.dot(a0[1, :], a0[1, :].T)) + wL * (np.dot(a0[2, :],a0[2, :].T)) + wL * (np.dot(a0[3, :],a0[3, :].T)) + wL * (np.dot(a0[5, :],a0[5, :].T)) + wL * (np.dot(a0[6, :],a0[6, :].T)) + wL * (np.dot(a0[11, :],a0[11, :].T)) + wL * (np.dot(a0[12, :],a0[12, :].T))
-JR = wR * (sum(diff_F))
-
-plt.draw()
-plt.show()
 
 
+# VISUALISATION
+# ------ States ----------------------
+plot_q_MUSCOD(q0, T_phase, nbNoeuds_phase)
+plot_dq_MUSCOD(dq0, T_phase, nbNoeuds_phase)
+plot_markers_result(q0, T_phase, nbNoeuds_phase, nbMarker, M_real)
+
+# ------ Control ---------------------
+plot_control_MUSCOD(np.vstack([a0, F0]), U_real, nbNoeuds_phase, T_phase)
+
+# ------ Objective function ----------
+plot_markers_heatmap(diff_M)
+plot_emg_heatmap(diff_U)
+plot_GRF_MUSCOD(GRF, GRF_real, nbNoeuds_phase, T_phase)
+
+# PRINT VALUES
+print('\n \nGlobal                 : ' + str(Ja + Je + Jm + JR))
+print('activation             : ' + str(Ja))
+print('emg                    : ' + str(Je))
+print('marker                 : ' + str(Jm))
+print('ground reaction forces : ' + str(JR))
+# print('constraints            : ' + str(sum(constraint)) + '\n')

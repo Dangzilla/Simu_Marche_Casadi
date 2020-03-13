@@ -145,7 +145,7 @@ def load_data_emg(file, T, nbNoeuds, nbMuscle, GaitPhase):
     if GaitPhase == 'swing':
         # T = T_swing
         t = np.linspace(0, T, int(stop - stop_stance))
-        node_t = np.linspace(0, T, nbNoeuds + 1)
+        node_t = np.linspace(0, T, nbNoeuds)
         f = interp1d(t, EMG[:, int(stop_stance) + 1: int(stop) + 1], kind='cubic')
         U_real = f(node_t)
 
@@ -231,9 +231,9 @@ def load_data_GRF(file, nbNoeuds_stance, nbNoeuds_swing, GaitPhase):
     [start, stop_stance, stop] = Get_Event(file)
 
     # time
-    T        = 1/freq * (stop - start)
+    T        = 1/freq * (stop - start + 1)
     T_stance = 1/freq * (stop_stance - start)
-    T_swing  = 1/freq * (stop - stop_stance)
+    T_swing  = 1/freq * (stop - stop_stance + 1)
 
     # FIND FORCE PLATFORM FOR RIGHT FOOT -- GET FORCES FOR MODEL
     P1 = sum(GRW[int(start): int(stop_stance) + 1, 2, 0])
