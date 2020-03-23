@@ -1,5 +1,6 @@
-import _thread
+# import _thread
 import time
+import threading
 from casadi import *
 from matplotlib import pyplot as plt
 import numpy as np
@@ -162,37 +163,62 @@ save_initialguess(params, u0, X0, p0)
 
 
 # ----------------------------- Callback -------------------------------------------------------------------------------
-mycallback = AnimateCallback('mycallback', (params.nbU * params.nbNoeuds + params.nbX * (params.nbNoeuds + 1) + params.nP), params.nbX * params.nbNoeuds, 0)
+mycallback = AnimateCallback('mycallback', (params.nbU * params.nbNoeuds + params.nbX * (params.nbNoeuds + 1) + params.nP), (params.nbX * params.nbNoeuds), 0)
 
+def print_callback(callback_data):
+    print('NEW THREAD print thread')
 
-# def print_callback(callback_data):
-#     print('NEW THREAD')
-#     fig = plt.figure()
-#     plot_handler = plt.plot(np.random.rand(), np.random.rand(), 'x')
-#     plt.show(block=False)
-#     print('FIGURE')
+    name_subject = params.name_subject
+    save_dir = params.save_dir
+    filename_param = name_subject + '_soldata.txt'
+    f = open(save_dir + filename_param, 'a')
+    f.write('SOLUTION CALLBACK\n\n')
+    np.savetxt(f, w0, delimiter='\n')
+    f.close()
+    time.sleep(0.001)
+
+    while True:
+        if callback_data.update_sol:
+            callback_data.update_sol = False
+            data = callback_data.sol_data
+            f = open(save_dir + filename_param, 'a')
+            np.savetxt(f, data, delimiter='\n')
+            f.write('\n\n')
+            f.close()
+        time.sleep(0.001)
+
+# def plot_callback(callback_data):
+#     print('NEW THREAD plot thread')
+#     # fig, ax = plt.subplots()
+#     # ax.plot(np.linspace(0, 10, 10), np.zeros((10)))
+#     # ax.set_title('hope it works')
+#     # plt.show(block=False)
+#     # plt.pause(0.01)
 #
 #     while True:
 #         if callback_data.update_sol:
-#             print('NEW DATA \n')
-#             # fig = plt.figure()
-#             # plot_handler = plt.plot(np.random.rand(), np.random.rand(), 'x')
-#             # plt.show(block=False)
-#             # plt.pause(0.01)
-#
+#             print('NEW DATA plot\n')
+#             data = callback_data.sol_data
+#             print(str(data[0]) + '\n')
+#             # ax.set_ydata(np.random.rand(10))
 #             callback_data.update_sol = False
-#
 #         # plt.draw()
-#         plt.pause(0.01)
+#         # plt.pause(.001)
+#         time.sleep(0.001)
 #
-# _thread.start_new_thread(print_callback, (mycallback,))          # nouveau thread
+# # _thread.start_new_thread(print_callback, (mycallback,))
+# plot_thread = threading.Thread(name = 'plot_data', target = plot_callback, args = (mycallback, ))                      # new thread
+# plot_thread.start()                                                                                                     # start new thread
+
+print_thread = threading.Thread(name = 'plot_data', target = print_callback, args = (mycallback, ))                      # new thread
+print_thread.start()                                                                                                     # start new thread
 
 # ----------------------------- Solver ---------------------------------------------------------------------------------
 w = vertcat(U, X, p)
 J = Ja + Je + Jm + JR
 
 nlp    = {'x': w, 'f': J, 'g': vertcat(*G)}
-opts   = {"ipopt.tol": 1e-1, "ipopt.linear_solver": "ma57", "ipopt.hessian_approximation":"limited-memory", "iteration_callback": mycallback}
+opts   = {"ipopt.tol": 1e-2, "ipopt.linear_solver": "ma57", "ipopt.hessian_approximation":"limited-memory", "iteration_callback": mycallback}
 solver = nlpsol("solver", "ipopt", nlp, opts)
 
 start_opti = time.time()
@@ -206,6 +232,8 @@ res = solver(lbg = lbg,
 # RESULTS
 stop_opti = time.time() - start_opti
 print('Time to solve : ' + str(stop_opti))
+
+# plot_thread.join()
 
 sol_U  = res["x"][:params.nbU * params.nbNoeuds]
 sol_X  = res["x"][params.nbU * params.nbNoeuds: -params.nP]
