@@ -8,7 +8,7 @@ class AnimateCallback(Callback):
         self.nP     = np
 
         self.sol_data   = None             # optimized variables
-        self.update_sol = True             # first iteration
+        self.update_sol = False            # first iteration
 
         self.construct(name, opts)
 
@@ -26,9 +26,8 @@ class AnimateCallback(Callback):
 
     def eval(self, arg):
         darg = {}
-        for (i, s) in enumerate(nlpsol_out()):
-            darg[s] = arg[i]
+        for (i, s) in enumerate(nlpsol_out()): darg[s] = arg[i]
 
-        self.sol_data   = darg["x"]
+        self.sol_data   = darg['x']
         self.update_sol = True
         return [0]

@@ -180,23 +180,23 @@ def affichage_markers_result(sol_q, T_phase, nbNoeuds_phase, nbMarker, M_real):
 
     plt.plot([-0.5, 1.5], [0, 0], 'k--')
 
-    # TIME
-    for nPhase in range(nbPhase):
-        if nPhase == 0:
-            t = np.linspace(0, T_phase[0], nbNoeuds_phase[0])
-        else:
-            t = np.hstack([t, t[-1] + np.linspace(0, T_phase[nPhase], nbNoeuds_phase[nPhase] + 1)])
-
-    # PLOT MARKERS DIFFERENCES
-    diff = M_simu[:, :, :] - M_real             # 3 x nMarker x nbNoeuds
-
-    plt.figure()
-    plt.title('Difference between simulated and real markers')
-
-    for nMark in range(nbMarker):
-        plt.subplot(6, 5, nMark + 1)
-        plt.plot(t, diff[0, nMark, :])
-        plt.plot(t, diff[2, nMark, :])
+    # # TIME
+    # for nPhase in range(nbPhase):
+    #     if nPhase == 0:
+    #         t = np.linspace(0, T_phase[0], nbNoeuds_phase[0])
+    #     else:
+    #         t = np.hstack([t, t[-1] + np.linspace(0, T_phase[nPhase], nbNoeuds_phase[nPhase] + 1)])
+    #
+    # # PLOT MARKERS DIFFERENCES
+    # diff = M_simu[:, :, :] - M_real             # 3 x nMarker x nbNoeuds
+    #
+    # plt.figure()
+    # plt.title('Difference between simulated and real markers')
+    #
+    # for nMark in range(nbMarker):
+    #     plt.subplot(6, 5, nMark + 1)
+    #     plt.plot(t, diff[0, nMark, :])
+    #     plt.plot(t, diff[2, nMark, :])
 
 
 
