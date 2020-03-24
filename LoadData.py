@@ -226,18 +226,6 @@ def load_data_GRF(params, GaitPhase):
     # GET GROUND REACTION WRENCHES
     GRW = GetGroundReactionForces(file)
 
-    # CENTER OF PRESSURE
-    # CoP     = ComputeCoP(file)
-    # corners = np.reshape(np.reshape(measurements['parameters']['FORCE_PLATFORM']['CORNERS']['value']*1e-3, (3 * 4 * 2, 1)), (2, 4, 3))                                                                                    # coins de la plateforme
-
-    # # Affichage CoP on force platform
-    # plt.figure()
-    # plt.plot(corners[0, :, 0],corners[0, :, 1],'o')
-    # plt.plot(corners[1, :, 0],corners[1, :, 1],'o')
-    # plt.plot(CoP[:, 0, 0], CoP[:, 1, 0], 'r+')
-    # plt.plot(CoP[:, 0, 1], CoP[:, 1, 1], 'g+')
-    # plt.axis('equal')
-
 
     # GET THE TIME OF TOE OFF & HEEL STRIKE
     time        = np.reshape(np.reshape(measurements['parameters']['EVENT']['TIMES']['value'], (7 * 2, 1)), (7, 2))[:, 1]
@@ -267,28 +255,21 @@ def load_data_GRF(params, GaitPhase):
     else:
         GRF = GRW[:, :, 1].T
 
-    # # AFFICHAGE GROUND REACTION FORCES
-    # plt.figure()
-    # t_init = np.linspace(0, len(GRW[:, 0, 0])*1/freq, len(GRW[:, 0, 0]))
-    # plt.plot(t_init, GRW[:, :, 0])
-    # plt.plot(t_init, GRW[:, :, 1], '--')
-    # plt.plot([RHS[0], RHS[1], RTO], [GRW[int(start + 1), 2, 0], GRW[int(stop + 1), 2, 0], GRW[int(stop_stance + 1), 2, 0]], '+')
-    #
-    # # Affichage ground reaction forces ajustées
-    # t = np.linspace(0, T, int(stop - start) + 1)
-    # plt.figure()
-    # plt.plot(t, GRW[int(start): int(stop) + 1, :, 0])
-    # plt.plot(t, GRW[int(start): int(stop) + 1, :, 1], '--')
-
     # INTERPOLATE AND GET REAL FORCES FOR SHOOTING POINT FOR THE GAIT CYCLE PHASE
-    # Stance
+    # # Stance
+    # t_stance        = np.linspace(0, T_stance, int(stop_stance - start) + 1)
+    # node_t_stance   = np.linspace(0, T_stance, nbNoeuds_stance)
+    # f_stance        = interp1d(t_stance, GRF[:, int(start): int(stop_stance + 1)], kind ='cubic')
+    # GRF_real_stance = f_stance(node_t_stance)
+
+    # T stance as the 25 point instead of 24 (starting at 0)
     t_stance        = np.linspace(0, T_stance, int(stop_stance - start) + 1)
-    node_t_stance   = np.linspace(0, T_stance, nbNoeuds_stance)
-    f_stance        = interp1d(t_stance, GRF[:, int(start): int(stop_stance + 1)], kind ='cubic')
+    node_t_stance   = np.linspace(0, T_stance, nbNoeuds_stance + 1)
+    f_stance        = interp1d(t_stance, GRF[:, int(start): int(stop_stance) + 1], kind ='cubic')
     GRF_real_stance = f_stance(node_t_stance)
 
     # Swing
-    t_swing        = np.linspace(0, T_swing + 1/freq, int(stop - stop_stance))
+    t_swing        = np.linspace(0, T_swing, int(stop - stop_stance))
     node_t_swing   = np.linspace(0, T_swing, nbNoeuds_swing)
     f_swing        = interp1d(t_swing, GRF[:, int(stop_stance) + 1: int(stop) + 1], kind ='cubic')
     GRF_real_swing = f_swing(node_t_swing)
@@ -301,14 +282,7 @@ def load_data_GRF(params, GaitPhase):
         GRF_real = GRF_real_stance
 
     elif GaitPhase == 'cycle':
-        # ! Y = mvt !
         GRF_real = np.hstack([GRF_real_stance, GRF_real_swing])
-
-    # # Afichage GRF_real
-    # plt.figure()
-    # node_t = np.hstack([node_t_stance, node_t_stance[-1] + node_t_swing])
-    # plt.plot(node_t, GRF_real[2, :].T, '+-')
-    # plt.plot([T_stance, T_stance], [0, 800], 'k--')
 
     return GRF_real, T, T_stance
 
