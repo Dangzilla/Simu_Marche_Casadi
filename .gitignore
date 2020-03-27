@@ -1,2 +1,3 @@
-
-Resultats/equincocont01/equincocont01_soldata.txt
+__pycache__/
+*.txt
+*.png
