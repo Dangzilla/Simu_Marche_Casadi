@@ -264,7 +264,7 @@ def load_data_GRF(params, GaitPhase):
 
     # T stance as the 25 point instead of 24 (starting at 0)
     t_stance        = np.linspace(0, T_stance, int(stop_stance - start) + 1)
-    node_t_stance   = np.linspace(0, T_stance, nbNoeuds_stance + 1)
+    node_t_stance   = np.linspace(0, T_stance, nbNoeuds_stance)
     f_stance        = interp1d(t_stance, GRF[:, int(start): int(stop_stance) + 1], kind ='cubic')
     GRF_real_stance = f_stance(node_t_stance)
 
@@ -284,6 +284,6 @@ def load_data_GRF(params, GaitPhase):
     elif GaitPhase == 'cycle':
         GRF_real = np.hstack([GRF_real_stance, GRF_real_swing])
 
-    return GRF_real, T, T_stance
+    return GRF_real, T, T_stance, T_swing
 
 

@@ -12,10 +12,11 @@ from Define_casadi_callback import AnimateCallback
 # add fcn
 from LoadData import load_data_markers, load_data_emg, load_data_GRF
 from Fcn_InitialGuess import load_initialguess_muscularExcitation, load_initialguess_q
-from Marche_Fcn_Integration import int_RK4_swing, int_RK4_stance, int_RK4
+from Marche_Fcn_Integration import int_RK4
 from Fcn_forward_dynamic import ffcn_contact, ffcn_no_contact
-from Fcn_Objective import fcn_objective_activation, fcn_objective_emg, fcn_objective_markers, fcn_objective_GRF
-from Fcn_print_data import save_GRF_real, save_Markers_real, save_EMG_real, save_params, save_bounds, save_initialguess
+import Fcn_Objective # fcn_objective_activation, fcn_objective_emg, fcn_objective_markers, fcn_objective_GRF
+import Fcn_print_data # save_GRF_real, save_Markers_real, save_EMG_real, save_params, save_bounds, save_initialguess
+from Evaluate_Results import calculate_objectivefcn
 
 # SET PARAMETERS
 params = Parameters()
@@ -37,8 +38,7 @@ dq = x[params.nbQ: 2 * params.nbQ]                            # velocities
 
 # ----------------------------- Load Data from c3d file ----------------------------------------------------------------
 # GROUND REACTION FORCES & SET TIME
-[GRF_real, params.T, params.T_stance] = load_data_GRF(params, 'cycle')
-params.T_swing                        = params.T - params.T_stance
+[GRF_real, params.T, params.T_stance, params.T_swing] = load_data_GRF(params, 'cycle')
 
 # MARKERS POSITION
 M_real_stance = load_data_markers(params, 'stance')
@@ -74,11 +74,11 @@ for k in range(params.nbNoeuds_stance):
     # G.append(X[params.nbX*(k + 1): params.nbX*(k + 2)] - int_RK4_stance(params.T_stance, params.nbNoeuds_stance, params.nkutta,  Xk, Uk))
 
     # OBJECTIVE FUNCTION
-    [grf, Jr] = fcn_objective_GRF(params.wR, Xk, Uk, GRF_real[:, k])                                                    # tracking ground reaction --> stance
+    [grf, Jr] = Fcn_Objective.fcn_objective_GRF(params.wR, Xk, Uk, GRF_real[:, k])                                                    # tracking ground reaction --> stance
     JR += Jr
-    Jm += fcn_objective_markers(params.wMa, params.wMt, Xk[: params.nbQ], M_real_stance[:, :, k], 'stance')             # tracking marker
-    Je += fcn_objective_emg(params.wU, Uk, U_real_stance[:, k])                                                         # tracking emg
-    Ja += fcn_objective_activation(params.wL, Uk)                                                                       # min muscle activations (no EMG)
+    Jm += Fcn_Objective.fcn_objective_markers(params.wMa, params.wMt, Xk[: params.nbQ], M_real_stance[:, :, k], 'stance')             # tracking marker
+    Je += Fcn_Objective.fcn_objective_emg(params.wU, Uk, U_real_stance[:, k])                                                         # tracking emg
+    Ja += Fcn_Objective.fcn_objective_activation(params.wL, Uk)                                                                       # min muscle activations (no EMG)
 
 # ------------ PHASE 2 : Swing phase
 for k in range(params.nbNoeuds_swing):
@@ -89,9 +89,9 @@ for k in range(params.nbNoeuds_swing):
     # G.append(X[params.nbX * params.nbNoeuds_stance + params.nbX*(k + 1): params.nbX * params.nbNoeuds_stance + params.nbX*(k + 2)] - int_RK4_swing(params.T_swing, params.nbNoeuds_swing, params.nkutta,  Xk, Uk))
 
     # OBJECTIVE FUNCTION
-    Jm += fcn_objective_markers(params.wMa, params.wMt, Xk[: params.nbQ], M_real_swing[:, :, k], 'swing')               # tracking marker
-    Je += fcn_objective_emg(params.wU, Uk, U_real_swing[:, k])                                                          # tracking emg
-    Ja += fcn_objective_activation(params.wL, Uk)                                                                       # min muscular activation
+    Jm += Fcn_Objective.fcn_objective_markers(params.wMa, params.wMt, Xk[: params.nbQ], M_real_swing[:, :, k], 'swing')               # tracking marker
+    Je += Fcn_Objective.fcn_objective_emg(params.wU, Uk, U_real_swing[:, k])                                                          # tracking emg
+    Ja += Fcn_Objective.fcn_objective_activation(params.wL, Uk)                                                                       # min muscular activation
 
 # ----------------------------- Contraintes ----------------------------------------------------------------------------
 # égalité
@@ -154,12 +154,12 @@ p0 = [1] + [1] * params.nbMus
 w0 = vertcat(vertcat(*u0.T), vertcat(*X0.T), p0)
 
 # ----------------------------- Save txt -------------------------------------------------------------------------------
-save_GRF_real(params, GRF_real)
-save_Markers_real(params, M_real)
-save_EMG_real(params, U_real)
-save_params(params)
-save_bounds(params, lbx, ubx)
-save_initialguess(params, u0, X0, p0)
+Fcn_print_data.save_GRF_real(params, GRF_real)
+Fcn_print_data.save_Markers_real(params, M_real)
+Fcn_print_data.save_EMG_real(params, U_real)
+Fcn_print_data.save_params(params)
+Fcn_print_data.save_bounds(params, lbx, ubx)
+Fcn_print_data.save_initialguess(params, u0, X0, p0)
 
 
 # ----------------------------- Callback -------------------------------------------------------------------------------
@@ -167,24 +167,21 @@ mycallback = AnimateCallback('mycallback', (params.nbU * params.nbNoeuds + param
 
 def print_callback(callback_data):
     print('NEW THREAD print thread')
-
-    name_subject = params.name_subject
-    save_dir = params.save_dir
-    filename_param = name_subject + '_soldata.txt'
-    f = open(save_dir + filename_param, 'a')
-    f.write('SOLUTION CALLBACK\n\n')
-    np.savetxt(f, w0, delimiter='\n')
-    f.close()
-    time.sleep(0.001)
-
+    objective = np.zeros(5)
     while True:
         if callback_data.update_sol:
+            print('NEW DATA')
+            # save state & control for each iteration
+            objective[0] = callback_data.obj_value
+            data  = callback_data.sol_data
+            sol_U = data[:params.nbU * params.nbNoeuds]
+            sol_X = data[params.nbU * params.nbNoeuds: -params.nP]
+            sol_p = data[-params.nP:]
+            Fcn_print_data.save_state_control_param(params, sol_X, sol_U, sol_p)
+
+            # Fcn_print_data.save_objective_values(params, objective, sol_X, sol_U)
+
             callback_data.update_sol = False
-            data = callback_data.sol_data
-            f = open(save_dir + filename_param, 'a')
-            np.savetxt(f, data, delimiter='\n')
-            f.write('\n\n')
-            f.close()
         time.sleep(0.001)
 
 # def plot_callback(callback_data):

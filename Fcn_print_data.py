@@ -1,5 +1,6 @@
 import os
 import numpy as np
+from Evaluate_Results import calculate_objectivefcn
 
 def save_GRF_real(params, GRF_real):
     # Save grf values from platform -- used for objective fcn : tracking
@@ -182,14 +183,33 @@ def save_initialguess(params, u0, x0, p0):
     np.savetxt(f, p0, delimiter='\n')
     f.close()
 
-def save_objective_values(name_subject, save_dir, objectif, constraint):
+def save_objective_values(params, objectif, sol_X, sol_U):
+
+    objectif[1:] = calculate_objectivefcn(params, sol_X, sol_U)
     # SAVE OBJECTIVE FUNCTION AND CONSTRAINTS VALUE FOR EACH ITERATION IN TXT
+    name_subject = params.name_subject
+    save_dir     = params.save_dir
     filename_J = name_subject + '_objvalue.txt'
+
     f = open(save_dir + '/RES/' + filename_J, 'a')
     f.write('Global                 : ' + str(objectif[0]) + '\n')
     f.write('activation             : ' + str(objectif[1]) + '\n')
     f.write('emg                    : ' + str(objectif[2]) + '\n')
     f.write('marker                 : ' + str(objectif[3]) + '\n')
     f.write('ground reaction forces : ' + str(objectif[4]) + '\n')
-    f.write('constraints            : ' + str(sum(constraint)) + '\n\n')
+    # f.write('constraints            : ' + str(sum(constraint)) + '\n\n')
+    f.close()
+
+def save_state_control_param(params, sol_X, sol_U, sol_p):
+    name_subject = params.name_subject
+    save_dir     = params.save_dir
+    filename_sol = name_subject + '_soldata.txt'
+    f = open(save_dir + '/RES/' + filename_sol, 'a')
+    f.write('STATE\n\n')
+    np.savetxt(f, sol_X, delimiter = '\n')
+    f.write('\n\nCONTROL\n\n')
+    np.savetxt(f, sol_U, delimiter='\n')
+    f.write('\n\nPARAMETER\n\n')
+    np.savetxt(f, sol_p, delimiter='\n')
+    f.write('\n\n')
     f.close()
