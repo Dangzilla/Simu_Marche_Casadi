@@ -8,6 +8,8 @@ class AnimateCallback(Callback):
         self.nP     = np
 
         self.sol_data   = None             # optimized variables
+        self.obj_value  = None             # objective fcn value
+        self.constaint  = None             # constraint values
         self.update_sol = False            # first iteration
 
         self.construct(name, opts)
@@ -29,5 +31,7 @@ class AnimateCallback(Callback):
         for (i, s) in enumerate(nlpsol_out()): darg[s] = arg[i]
 
         self.sol_data   = darg['x']
+        self.obj_value  = darg['f']
+        self.constaint  = darg['g']
         self.update_sol = True
         return [0]
